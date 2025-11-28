@@ -10,11 +10,15 @@ export default defineConfig({
       input: {
         index: resolve(__dirname, 'index.html'),
         background: resolve(__dirname, 'src/background.ts'),
+        content: resolve(__dirname, 'src/content/index.ts'),
       },
       output: {
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'background') {
             return 'background.js'
+          }
+          if (chunkInfo.name === 'content') {
+            return 'content.js'
           }
           return 'assets/[name]-[hash].js'
         },
