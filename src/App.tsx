@@ -1,7 +1,117 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
+import { generateMapping } from './services/ai'
+
+interface LogEntry {
+  id: number
+  message: string
+  type: 'info' | 'success' | 'error'
+  timestamp: Date
+}
 
 function App() {
+  const [apiKey, setApiKey] = useState('')
   const [note, setNote] = useState('')
+  const [status, setStatus] = useState<'idle' | 'scanning' | 'mapping' | 'filling' | 'done' | 'error'>('idle')
+  const [logs, setLogs] = useState<LogEntry[]>([])
+
+  const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
+    setLogs(prev => [...prev, {
+      id: Date.now(),
+      message,
+      type,
+      timestamp: new Date()
+    }])
+  }, [])
+
+  const clearLogs = useCallback(() => {
+    setLogs([])
+  }, [])
+
+  const handleAutoFill = async () => {
+    // Validation
+    if (!apiKey.trim()) {
+      addLog('Please enter your Anthropic API key', 'error')
+      return
+    }
+    if (!note.trim()) {
+      addLog('Please paste a clinical note', 'error')
+      return
+    }
+
+    clearLogs()
+    
+    try {
+      // Step A: Scan the page
+      setStatus('scanning')
+      addLog('Scanning page for form fields...')
+
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      
+      if (!tab?.id) {
+        throw new Error('No active tab found')
+      }
+
+      const scanResponse = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_PAGE' })
+      
+      if (!scanResponse.success) {
+        throw new Error(scanResponse.error || 'Failed to scan page')
+      }
+
+      const schema = scanResponse.data
+      addLog(`Found ${schema.fields.length} form fields`, 'success')
+      
+      if (schema.fields.length === 0) {
+        throw new Error('No form fields found on this page')
+      }
+
+      // Step B: Generate mapping using AI
+      setStatus('mapping')
+      addLog('Analyzing note with Claude AI...')
+      
+      const mapping = await generateMapping(note, schema, apiKey)
+      const fieldCount = Object.keys(mapping).length
+      
+      if (fieldCount === 0) {
+        throw new Error('AI could not map any fields from the note')
+      }
+      
+      addLog(`Mapped ${fieldCount} fields from note`, 'success')
+
+      // Step C: Fill the form
+      setStatus('filling')
+      addLog('Filling form fields...')
+
+      const fillResponse = await chrome.tabs.sendMessage(tab.id, { 
+        type: 'FILL_FORM', 
+        mapping 
+      })
+
+      if (!fillResponse.success) {
+        throw new Error(fillResponse.error || 'Failed to fill form')
+      }
+
+      const result = fillResponse.data
+      addLog(`✓ Filled: ${result.filled.length} fields`, 'success')
+      
+      if (result.failed.length > 0) {
+        addLog(`⚠ Failed: ${result.failed.join(', ')}`, 'error')
+      }
+      if (result.notFound.length > 0) {
+        addLog(`⚠ Not found: ${result.notFound.join(', ')}`, 'error')
+      }
+
+      setStatus('done')
+      addLog('Auto-fill complete!', 'success')
+
+    } catch (error) {
+      setStatus('error')
+      const message = error instanceof Error ? error.message : 'An unknown error occurred'
+      addLog(`Error: ${message}`, 'error')
+    }
+  }
+
+  const isProcessing = status === 'scanning' || status === 'mapping' || status === 'filling'
+  const canSubmit = apiKey.trim() && note.trim() && !isProcessing
 
   return (
     <div className="app">
@@ -11,6 +121,18 @@ function App() {
       </header>
 
       <main className="main">
+        <section className="input-section">
+          <label htmlFor="api-key">Anthropic API Key</label>
+          <input
+            id="api-key"
+            type="password"
+            placeholder="sk-ant-api..."
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            disabled={isProcessing}
+          />
+        </section>
+
         <section className="note-section">
           <label htmlFor="note-input">Clinical Note</label>
           <textarea
@@ -18,21 +140,50 @@ function App() {
             placeholder="Paste your Heidi note here..."
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            disabled={isProcessing}
           />
         </section>
 
         <div className="actions">
-          <button className="btn btn-secondary">
-            Scan Page
-          </button>
-          <button className="btn btn-primary" disabled={!note.trim()}>
-            Auto-Fill Form
+          <button 
+            className="btn btn-primary" 
+            disabled={!canSubmit}
+            onClick={handleAutoFill}
+          >
+            {isProcessing ? (
+              <>
+                <span className="spinner"></span>
+                {status === 'scanning' && 'Scanning...'}
+                {status === 'mapping' && 'Mapping...'}
+                {status === 'filling' && 'Filling...'}
+              </>
+            ) : (
+              'Auto-Fill Form'
+            )}
           </button>
         </div>
+
+        {logs.length > 0 && (
+          <section className="log-section">
+            <div className="log-header">
+              <label>Activity Log</label>
+              <button className="btn-clear" onClick={clearLogs}>Clear</button>
+            </div>
+            <div className="log-container">
+              {logs.map((log) => (
+                <div key={log.id} className={`log-entry log-${log.type}`}>
+                  <span className="log-time">
+                    {log.timestamp.toLocaleTimeString()}
+                  </span>
+                  <span className="log-message">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   )
 }
 
 export default App
-
