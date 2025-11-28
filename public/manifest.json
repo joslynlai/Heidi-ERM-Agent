@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Heidi EMR Agent",
+  "version": "0.0.1",
+  "description": "Chrome Extension Side Panel that scans OpenEMR pages and auto-fills form fields using AI",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_title": "Heidi Agent"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
+
