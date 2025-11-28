@@ -27,10 +27,27 @@ function App() {
     setLogs([])
   }, [])
 
+  // Ensure content script is injected and ready
+  const ensureContentScript = async (tabId: number): Promise<void> => {
+    try {
+      // Try to ping the content script first
+      await chrome.tabs.sendMessage(tabId, { type: 'PING' })
+    } catch {
+      // Content script not loaded, inject it
+      addLog('Injecting content script...')
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      })
+      // Small delay to ensure script is ready
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  }
+
   const handleAutoFill = async () => {
     // Validation
     if (!apiKey.trim()) {
-      addLog('Please enter your Anthropic API key', 'error')
+      addLog('Please enter your Gemini API key', 'error')
       return
     }
     if (!note.trim()) {
@@ -51,6 +68,9 @@ function App() {
         throw new Error('No active tab found')
       }
 
+      // Ensure content script is loaded
+      await ensureContentScript(tab.id)
+
       const scanResponse = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_PAGE' })
       
       if (!scanResponse.success) {
@@ -66,7 +86,7 @@ function App() {
 
       // Step B: Generate mapping using AI
       setStatus('mapping')
-      addLog('Analyzing note with Claude AI...')
+      addLog('Analyzing note with Gemini AI...')
       
       const mapping = await generateMapping(note, schema, apiKey)
       const fieldCount = Object.keys(mapping).length
@@ -122,11 +142,11 @@ function App() {
 
       <main className="main">
         <section className="input-section">
-          <label htmlFor="api-key">Anthropic API Key</label>
+          <label htmlFor="api-key">Gemini API Key</label>
           <input
             id="api-key"
             type="password"
-            placeholder="sk-ant-api..."
+            placeholder="AIza..."
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             disabled={isProcessing}

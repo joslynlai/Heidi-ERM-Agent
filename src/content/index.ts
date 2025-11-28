@@ -368,6 +368,12 @@ function scanPage(): ScanResult {
  * Listen for messages from the extension
  */
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Respond to ping to confirm script is loaded
+  if (message.type === 'PING') {
+    sendResponse({ success: true, message: 'Content script is ready' })
+    return true
+  }
+
   if (message.type === 'SCAN_PAGE') {
     try {
       const result = scanPage()
