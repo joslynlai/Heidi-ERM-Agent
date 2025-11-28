@@ -252,12 +252,31 @@ body {
   background: var(--bg-tertiary);
 }
 
+.log-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.debug-toggle input {
+  cursor: pointer;
+}
+
 .log-container {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 12px;
-  max-height: 200px;
+  max-height: 400px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -293,10 +312,32 @@ body {
   font-size: 0.75rem;
   flex-shrink: 0;
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  min-width: 70px;
+}
+
+.log-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .log-message {
-  flex: 1;
+  word-break: break-word;
+}
+
+.log-data {
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-secondary);
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .log-info .log-message {
@@ -309,5 +350,14 @@ body {
 
 .log-error .log-message {
   color: var(--danger);
+}
+
+.log-debug .log-message {
+  color: #a78bfa;
+  font-size: 0.75rem;
+}
+
+.log-debug {
+  opacity: 0.9;
 }
 
