@@ -40,21 +40,116 @@ function App() {
     setLogs([])
   }, [])
 
-  // Ensure content script is injected and ready
-  const ensureContentScript = async (tabId: number): Promise<void> => {
+  // Inject content script into all frames
+  const injectContentScript = async (tabId: number): Promise<void> => {
     try {
-      // Try to ping the content script first
-      await chrome.tabs.sendMessage(tabId, { type: 'PING' })
-    } catch {
-      // Content script not loaded, inject it
-      addLog('Injecting content script...')
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, allFrames: true },
         files: ['content.js']
       })
-      // Small delay to ensure script is ready
+      // Small delay to ensure scripts are ready
       await new Promise(resolve => setTimeout(resolve, 100))
+    } catch (error) {
+      console.log('[Heidi Agent] Script injection note:', error)
     }
+  }
+
+  // Scan all frames and aggregate results
+  const scanAllFrames = async (tabId: number): Promise<FormField[]> => {
+    // Inject scripts into all frames first
+    await injectContentScript(tabId)
+    
+    // Execute scanning function in all frames
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        // This function runs in each frame
+        const fields: Array<{
+          id: string
+          name: string
+          type: string
+          placeholder: string
+          label: string
+          tagName: string
+          options?: string[]
+          frameUrl?: string
+        }> = []
+        
+        const isElementVisible = (element: HTMLElement): boolean => {
+          const style = window.getComputedStyle(element)
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return false
+          }
+          const rect = element.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0
+        }
+        
+        const findLabelText = (element: HTMLElement): string => {
+          const id = element.id
+          if (id) {
+            const label = document.querySelector(`label[for="${id}"]`)
+            if (label?.textContent) return label.textContent.trim()
+          }
+          const parentLabel = element.closest('label')
+          if (parentLabel) {
+            const clone = parentLabel.cloneNode(true) as HTMLElement
+            clone.querySelectorAll('input, select, textarea').forEach(el => el.remove())
+            if (clone.textContent?.trim()) return clone.textContent.trim()
+          }
+          const prev = element.previousElementSibling
+          if (prev?.tagName === 'LABEL' && prev.textContent) return prev.textContent.trim()
+          const parent = element.parentElement
+          if (parent?.tagName === 'TD') {
+            const prevTd = parent.previousElementSibling
+            if (prevTd?.textContent) return prevTd.textContent.trim()
+          }
+          return element.getAttribute('aria-label') || element.getAttribute('title') || ''
+        }
+        
+        const inputs = document.querySelectorAll('input, textarea, select')
+        inputs.forEach((element) => {
+          const el = element as HTMLElement
+          if (!isElementVisible(el)) return
+          
+          if (element.tagName === 'INPUT') {
+            const type = (element as HTMLInputElement).type.toLowerCase()
+            if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(type)) return
+          }
+          
+          const field = {
+            id: element.id || '',
+            name: (element as HTMLInputElement).name || '',
+            type: element.tagName === 'INPUT' 
+              ? (element as HTMLInputElement).type || 'text'
+              : element.tagName.toLowerCase(),
+            placeholder: (element as HTMLInputElement).placeholder || '',
+            label: findLabelText(el),
+            tagName: element.tagName.toLowerCase(),
+            options: element.tagName === 'SELECT' 
+              ? Array.from((element as HTMLSelectElement).options).map(o => o.text.trim()).filter(Boolean)
+              : undefined,
+            frameUrl: window.location.href
+          }
+          
+          if (field.id || field.name || field.label || field.placeholder) {
+            fields.push(field)
+          }
+        })
+        
+        return fields
+      }
+    })
+    
+    // Aggregate fields from all frames
+    const allFields: FormField[] = []
+    results.forEach((result, index) => {
+      if (result.result && Array.isArray(result.result)) {
+        addLog(`  📄 Frame ${index + 1}: Found ${result.result.length} fields`, 'debug')
+        allFields.push(...result.result)
+      }
+    })
+    
+    return allFields
   }
 
   const handleAutoFill = async () => {
@@ -71,9 +166,9 @@ function App() {
     clearLogs()
     
     try {
-      // Step A: Scan the page
+      // Step A: Scan the page (including all iframes)
       setStatus('scanning')
-      addLog('📡 Step 1: Scanning page for form fields...')
+      addLog('📡 Step 1: Scanning page for form fields (including iframes)...')
 
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       
@@ -81,17 +176,17 @@ function App() {
         throw new Error('No active tab found')
       }
 
-      // Ensure content script is loaded
-      await ensureContentScript(tab.id)
-
-      const scanResponse = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_PAGE' })
+      // Scan all frames and aggregate results
+      const allFields = await scanAllFrames(tab.id)
       
-      if (!scanResponse.success) {
-        throw new Error(scanResponse.error || 'Failed to scan page')
+      const schema = {
+        url: tab.url || '',
+        title: tab.title || '',
+        fields: allFields,
+        timestamp: Date.now()
       }
-
-      const schema = scanResponse.data
-      addLog(`✅ Found ${schema.fields.length} form fields on page`, 'success')
+      
+      addLog(`✅ Found ${schema.fields.length} form fields across all frames`, 'success')
       
       // Log each field found
       if (schema.fields.length > 0) {
@@ -129,31 +224,126 @@ function App() {
         addLog(`  → ${fieldId}: "${value}"`, 'debug')
       })
 
-      // Step C: Fill the form
+      // Step C: Fill the form across all frames
       setStatus('filling')
-      addLog('✏️ Step 3: Filling form fields...')
+      addLog('✏️ Step 3: Filling form fields across all frames...')
 
-      const fillResponse = await chrome.tabs.sendMessage(tab.id, { 
-        type: 'FILL_FORM', 
-        mapping 
+      // Execute fill in all frames
+      const fillResults = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: (mappingArg: Record<string, string>) => {
+          const result = { filled: [] as string[], failed: [] as string[], notFound: [] as string[] }
+          
+          const dispatchEvents = (el: HTMLElement) => {
+            el.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }))
+            el.dispatchEvent(new Event('change', { bubbles: true }))
+            el.dispatchEvent(new FocusEvent('blur', { bubbles: true }))
+          }
+          
+          const addIndicator = (el: HTMLElement) => {
+            const orig = { border: el.style.border, boxShadow: el.style.boxShadow }
+            el.style.border = '2px solid #00d4aa'
+            el.style.boxShadow = '0 0 8px rgba(0, 212, 170, 0.5)'
+            setTimeout(() => {
+              el.style.border = orig.border
+              el.style.boxShadow = orig.boxShadow
+            }, 2000)
+          }
+          
+          for (const [fieldId, value] of Object.entries(mappingArg)) {
+            let element = document.getElementById(fieldId) || 
+                          document.querySelector(`[name="${fieldId}"]`) as HTMLElement
+            
+            if (!element) {
+              // Field not in this frame, skip (might be in another frame)
+              continue
+            }
+            
+            try {
+              element.focus()
+              
+              if (element instanceof HTMLInputElement) {
+                const type = element.type.toLowerCase()
+                if (type === 'checkbox') {
+                  element.checked = ['true', '1', 'yes', 'on'].includes(value.toLowerCase())
+                } else if (type === 'radio') {
+                  if (element.value === value) element.checked = true
+                } else {
+                  element.value = value
+                }
+                dispatchEvents(element)
+              } else if (element instanceof HTMLTextAreaElement) {
+                element.value = value
+                dispatchEvents(element)
+              } else if (element instanceof HTMLSelectElement) {
+                // Try exact value match
+                let matched = false
+                for (const opt of element.options) {
+                  if (opt.value === value || opt.text.toLowerCase().includes(value.toLowerCase())) {
+                    element.value = opt.value
+                    matched = true
+                    break
+                  }
+                }
+                if (matched) dispatchEvents(element)
+                else {
+                  result.failed.push(fieldId)
+                  continue
+                }
+              }
+              
+              addIndicator(element)
+              result.filled.push(fieldId)
+            } catch {
+              result.failed.push(fieldId)
+            }
+          }
+          
+          return result
+        },
+        args: [mapping]
       })
-
-      if (!fillResponse.success) {
-        throw new Error(fillResponse.error || 'Failed to fill form')
-      }
-
-      const result = fillResponse.data
-      addLog('📋 FILL RESULT:', 'debug', result)
       
-      if (result.filled.length > 0) {
-        addLog(`✅ Successfully filled: ${result.filled.join(', ')}`, 'success')
+      // Aggregate fill results from all frames
+      const aggregatedResult = { filled: [] as string[], failed: [] as string[], notFound: [] as string[] }
+      const processedFields = new Set<string>()
+      
+      fillResults.forEach((frameResult) => {
+        if (frameResult.result) {
+          frameResult.result.filled.forEach((f: string) => {
+            if (!processedFields.has(f)) {
+              aggregatedResult.filled.push(f)
+              processedFields.add(f)
+            }
+          })
+          frameResult.result.failed.forEach((f: string) => {
+            if (!processedFields.has(f)) {
+              aggregatedResult.failed.push(f)
+              processedFields.add(f)
+            }
+          })
+        }
+      })
+      
+      // Find fields that weren't found in any frame
+      Object.keys(mapping).forEach(fieldId => {
+        if (!processedFields.has(fieldId)) {
+          aggregatedResult.notFound.push(fieldId)
+        }
+      })
+      
+      addLog('📋 FILL RESULT:', 'debug', aggregatedResult)
+      
+      if (aggregatedResult.filled.length > 0) {
+        addLog(`✅ Successfully filled: ${aggregatedResult.filled.join(', ')}`, 'success')
       }
       
-      if (result.failed.length > 0) {
-        addLog(`⚠️ Failed to fill: ${result.failed.join(', ')}`, 'error')
+      if (aggregatedResult.failed.length > 0) {
+        addLog(`⚠️ Failed to fill: ${aggregatedResult.failed.join(', ')}`, 'error')
       }
-      if (result.notFound.length > 0) {
-        addLog(`❌ Fields not found on page: ${result.notFound.join(', ')}`, 'error')
+      if (aggregatedResult.notFound.length > 0) {
+        addLog(`❌ Fields not found in any frame: ${aggregatedResult.notFound.join(', ')}`, 'error')
         addLog('💡 Tip: AI returned field IDs that don\'t exist. Check scan result above for valid IDs.', 'info')
       }
 
