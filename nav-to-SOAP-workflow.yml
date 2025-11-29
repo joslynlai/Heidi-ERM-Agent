@@ -1,0 +1,51 @@
+workflow:
+  name: "Navigate to SOAP Form Page"
+  description: "Hardcoded plan to describe manual navigation steps for agent training"
+
+  context:
+    current_page: "Patient Encounter Table Page"
+    goal_page: "SOAP Form Page"
+
+  steps:
+    - id: 1
+      action: "fill_form"
+      description: "Fill up the encounter form"
+      selectors:
+
+    - id: 2
+      action: "click"
+      description: "Click Save button"
+      selectors:
+        button_id: "saveEncounter"
+        button_label: "Save"
+
+    - id: 3
+      action: "click"
+      description: "Click Clinical dropdown"
+      selectors:
+        dropdown_id: "category_Clinical"
+        dropdown_label: "Clinical"
+
+    - id: 4
+      action: "select_option"
+      description: "Select SOAP from dropdown"
+      selectors:
+        option_text: "SOAP" # expected visible text
+        soap_link: "a[onclick*='SOAP']"
+
+    - id: 5
+      action: "fill_form"
+      description: "Fill up the SOAP template form"
+      selectors:
+
+    - id: 6
+      action: "click"
+      description: "Click Save button on SOAP form"
+      selectors:
+        button_id: "SOAP_SAVE_BUTTON"
+        button_type: button[title="Save"]
+
+  metadata:
+    author: "Heidi"
+    version: "1.0"
+    training_plan: "selectors will be populated later and dumped into prompt for execution ordering"
